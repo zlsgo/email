@@ -74,7 +74,8 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 	mbox, err = c.imapClient.Select("INBOX", false)
 
 	if err != nil {
-		if strings.Contains(err.Error(), "closed") {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
 			err := c.imapConnection()
 			if err == nil {
 				return c.Get(filter...)
@@ -236,6 +237,8 @@ func (c *Client) GetRealTime(interval time.Duration, filter ...func(*Filter)) <-
 				for _, mail := range mails {
 					emails <- mail
 				}
+			} else {
+				zlog.Error("email err", err)
 			}
 
 			<-ticker.C
