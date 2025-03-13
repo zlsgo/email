@@ -12,6 +12,7 @@ import (
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/mail"
 	"github.com/sohaha/zlsgo/zarray"
+	"github.com/sohaha/zlsgo/zlog"
 )
 
 type Client struct {
