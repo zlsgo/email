@@ -12,7 +12,6 @@ import (
 	"github.com/emersion/go-imap/client"
 	"github.com/emersion/go-message/mail"
 	"github.com/sohaha/zlsgo/zarray"
-	"github.com/sohaha/zlsgo/zlog"
 )
 
 type Client struct {
@@ -35,6 +34,7 @@ type Email struct {
 	From       []string
 	Date       time.Time
 	Attachment []Attachment
+	Flags      []string
 }
 
 func (m *Client) Close() {
@@ -72,7 +72,6 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 
 	var mbox *imap.MailboxStatus
 	mbox, err = c.imapClient.Select("INBOX", false)
-
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
@@ -96,7 +95,7 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 	if f.All {
 		f.flags = append(f.flags, "ALL")
 	} else {
-		f.flags = append(f.flags, "\\Seen")
+		f.flags = append(f.flags, imap.SeenFlag)
 	}
 
 	criteria := imap.NewSearchCriteria()
@@ -150,6 +149,7 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 
 		email := Email{
 			Uid:     id,
+			Flags:   message.Flags,
 			Subject: message.Envelope.Subject,
 		}
 
@@ -256,7 +256,13 @@ func (c *Client) Delete(uids ...uint32) error {
 func (c *Client) MarkRead(uids ...uint32) error {
 	seqSet := &imap.SeqSet{}
 	seqSet.AddNum(uids...)
-	item := imap.FormatFlagsOp(imap.SetFlags, true)
+	item := imap.FormatFlagsOp(imap.AddFlags, true)
 	flags := []interface{}{imap.SeenFlag}
-	return c.imapClient.UidStore(seqSet, item, flags, nil)
+
+	err := c.imapClient.Store(seqSet, item, flags, nil)
+	if err != nil {
+		return err
+	}
+
+	return c.imapClient.Expunge(nil)
 }
