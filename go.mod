@@ -1,6 +1,6 @@
 module github.com/zlsgo/email
 
-go 1.11
+go 1.18
 
 require (
 	github.com/emersion/go-imap v1.2.1
