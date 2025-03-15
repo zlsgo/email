@@ -15,33 +15,6 @@ import (
 	"github.com/sohaha/zlsgo/zlog"
 )
 
-type Client struct {
-	email      string
-	password   string
-	imapServer string
-	smtpServer string
-	imapClient *client.Client
-	smtpClient *client.Client
-}
-type Attachment struct {
-	Name string
-	Body []byte
-}
-
-type Email struct {
-	Uid        uint32
-	Subject    string
-	Content    []byte
-	From       []string
-	Date       time.Time
-	Attachment []Attachment
-	Flags      []string
-}
-
-func (m *Client) Close() {
-	m.imapClient.Close()
-}
-
 func (c *Client) imapConnection() error {
 	ic, err := client.DialTLS(c.imapServer, nil)
 	// ic, err := client.DialTLS(c.imapServer, &tls.Config{InsecureSkipVerify: true})
