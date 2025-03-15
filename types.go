@@ -68,4 +68,6 @@ type SendOption struct {
 	Bcc []string
 	// 附件
 	// Attachments []Attachment
+	// 是否为 HTML 邮件
+	IsHTML bool
 }

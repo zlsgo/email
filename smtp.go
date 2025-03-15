@@ -86,7 +86,6 @@ func (c *Client) smtpClient() (*smtp.Client, error) {
 		conn, err = tls.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)), tlsConfig)
 	} else {
 		conn, err = net.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
-
 	}
 
 	if err != nil {
@@ -174,7 +173,11 @@ func composeMimeMail(to []string, from string, subject string, body []byte, opt 
 
 	header["Subject"] = subject
 	header["MIME-Version"] = "1.0"
-	header["Content-Type"] = "text/plain; charset=\"utf-8\""
+	if opt.IsHTML {
+		header["Content-Type"] = "text/html; charset=\"utf-8\""
+	} else {
+		header["Content-Type"] = "text/plain; charset=\"utf-8\""
+	}
 	header["Content-Transfer-Encoding"] = "base64"
 
 	var message bytes.Buffer
