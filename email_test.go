@@ -18,7 +18,7 @@ func TestEmail(t *testing.T) {
 	tt.NoError(err, true)
 
 	emails, err := client.Get(func(f *email.Filter) {
-		f.Limit = 5
+		f.Limit = 2
 		f.MarkRead = true
 	})
 	tt.NoError(err, true)

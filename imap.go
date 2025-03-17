@@ -59,6 +59,18 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		return nil, err
 	}
 
+	defer func() {
+		if err != nil {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
+				err = c.imapConnection()
+				if err == nil {
+					emails, err = c.Get(filter...)
+				}
+			}
+		}
+	}()
+
 	f := Filter{Select: "INBOX"}
 	for i := range filter {
 		filter[i](&f)
@@ -67,13 +79,6 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 	var mbox *imap.MailboxStatus
 	mbox, err = c.imapClient.Select(f.Select, false)
 	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
-			err := c.imapConnection()
-			if err == nil {
-				return c.Get(filter...)
-			}
-		}
 		return
 	}
 
@@ -143,11 +148,10 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		}
 
 		chanMsg := make(chan *imap.Message, 1)
-		go func() {
-			_ = c.imapClient.Fetch(seqset,
-				[]imap.FetchItem{imap.FetchRFC822},
-				chanMsg)
-		}()
+
+		_ = c.imapClient.Fetch(seqset,
+			[]imap.FetchItem{imap.FetchRFC822},
+			chanMsg)
 
 		msg := <-chanMsg
 		if msg != nil {
@@ -160,7 +164,8 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 			email.From = zarray.Map(message.Envelope.From, func(_ int, a *imap.Address) string {
 				return a.MailboxName + "@" + a.HostName
 			})
-			mr, err := mail.CreateReader(r)
+			var mr *mail.Reader
+			mr, err = mail.CreateReader(r)
 			if err != nil {
 				return nil, err
 			}
@@ -172,7 +177,8 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 			}
 
 			for {
-				p, err := mr.NextPart()
+				var p *mail.Part
+				p, err = mr.NextPart()
 				if err == io.EOF {
 					break
 				} else if err != nil {
