@@ -163,24 +163,19 @@ func formatEmailAddresses(addrs []string) string {
 }
 
 func composeMimeMail(to []string, from string, subject string, body []byte, opt *SendOption) []byte {
+	var message bytes.Buffer
+	boundary := "----=_NextPart_" + zstring.Rand(16)
+
 	header := make(map[string]string)
 	header["From"] = formatEmailAddress(from)
 	header["To"] = formatEmailAddresses(to)
-
 	if len(opt.Cc) > 0 {
 		header["Cc"] = formatEmailAddresses(opt.Cc)
 	}
-
 	header["Subject"] = subject
 	header["MIME-Version"] = "1.0"
-	if opt.IsHTML {
-		header["Content-Type"] = "text/html; charset=\"utf-8\""
-	} else {
-		header["Content-Type"] = "text/plain; charset=\"utf-8\""
-	}
-	header["Content-Transfer-Encoding"] = "base64"
+	header["Content-Type"] = "multipart/mixed; boundary=\"" + boundary + "\""
 
-	var message bytes.Buffer
 	for k, v := range header {
 		message.WriteString(k)
 		message.WriteString(": ")
@@ -188,7 +183,27 @@ func composeMimeMail(to []string, from string, subject string, body []byte, opt 
 		message.WriteString("\r\n")
 	}
 	message.WriteString("\r\n")
+
+	message.WriteString("--" + boundary + "\r\n")
+	if opt.IsHTML {
+		message.WriteString("Content-Type: text/html; charset=\"utf-8\"\r\n")
+	} else {
+		message.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
+	}
+	message.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
 	message.Write(zstring.Base64Encode(body))
+	message.WriteString("\r\n")
+
+	for _, attachment := range opt.Attachments {
+		message.WriteString("--" + boundary + "\r\n")
+		message.WriteString("Content-Type: application/octet-stream\r\n")
+		message.WriteString("Content-Disposition: attachment; filename=\"" + attachment.Name + "\"\r\n")
+		message.WriteString("Content-Transfer-Encoding: base64\r\n\r\n")
+		message.Write(zstring.Base64Encode(attachment.Body))
+		message.WriteString("\r\n")
+	}
+
+	message.WriteString("--" + boundary + "--\r\n")
 
 	return message.Bytes()
 }

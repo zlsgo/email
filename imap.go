@@ -17,7 +17,6 @@ import (
 
 func (c *Client) imapConnection() error {
 	ic, err := client.DialTLS(c.imapServer, nil)
-	// ic, err := client.DialTLS(c.imapServer, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		return err
 	}
@@ -25,18 +24,20 @@ func (c *Client) imapConnection() error {
 	if err := ic.Login(c.email, c.password); err != nil {
 		return err
 	}
+
 	ic.ErrorLog = zlog.NewZLog(io.Discard, "", 0, 0, false, 0)
 	c.imapClient = ic
+
 	return nil
 }
 
 type Filter struct {
-	Limit uint
-	// 实时获取时无效
-	All      bool
-	flags    []string
-	MarkRead bool
-	SortDesc bool
+	Limit    uint     // 限制获取的邮件数量
+	All      bool     // 是否获取所有邮件, 实时获取时无效
+	flags    []string // 邮件标志
+	MarkRead bool     // 是否标记为已读
+	SortDesc bool     // 是否降序
+	Select   string   // 指定 mailbox
 }
 
 func (c *Client) hasImapClient() error {
@@ -58,8 +59,13 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		return nil, err
 	}
 
+	f := Filter{Select: "INBOX"}
+	for i := range filter {
+		filter[i](&f)
+	}
+
 	var mbox *imap.MailboxStatus
-	mbox, err = c.imapClient.Select("INBOX", false)
+	mbox, err = c.imapClient.Select(f.Select, false)
 	if err != nil {
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
@@ -73,11 +79,6 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 
 	if mbox.Messages == 0 {
 		return
-	}
-
-	f := Filter{}
-	for i := range filter {
-		filter[i](&f)
 	}
 
 	if f.All {
