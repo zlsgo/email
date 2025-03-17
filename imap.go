@@ -39,9 +39,23 @@ type Filter struct {
 	SortDesc bool
 }
 
-func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
+func (c *Client) hasImapClient() error {
 	if c.imapClient == nil {
-		return nil, errors.New("imap client is nil")
+		return errors.New("imap client is nil")
+	}
+	return nil
+}
+
+func (c *Client) Select(name string, readOnly bool) (*imap.MailboxStatus, error) {
+	if err := c.hasImapClient(); err != nil {
+		return nil, err
+	}
+	return c.imapClient.Select(name, readOnly)
+}
+
+func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
+	if err := c.hasImapClient(); err != nil {
+		return nil, err
 	}
 
 	var mbox *imap.MailboxStatus
@@ -222,15 +236,40 @@ func (c *Client) GetRealTime(interval time.Duration, filter ...func(*Filter)) <-
 }
 
 func (c *Client) Delete(uids ...uint32) error {
+	if err := c.hasImapClient(); err != nil {
+		return err
+	}
 	seqSet := &imap.SeqSet{}
 	seqSet.AddNum(uids...)
 	return c.imapClient.Store(seqSet, "+FLAGS", []interface{}{imap.DeletedFlag}, nil)
 }
 
 func (c *Client) MarkRead(uids ...uint32) error {
+	if err := c.hasImapClient(); err != nil {
+		return err
+	}
 	seqSet := &imap.SeqSet{}
 	seqSet.AddNum(uids...)
 	item := imap.FormatFlagsOp(imap.AddFlags, true)
+	flags := []interface{}{imap.SeenFlag}
+
+	err := c.imapClient.Store(seqSet, item, flags, nil)
+	if err != nil {
+		return err
+	}
+
+	return c.imapClient.Expunge(nil)
+}
+
+func (c *Client) MarkUnread(uids ...uint32) error {
+	if err := c.hasImapClient(); err != nil {
+		return err
+	}
+
+	seqSet := &imap.SeqSet{}
+	seqSet.AddNum(uids...)
+
+	item := imap.FormatFlagsOp(imap.RemoveFlags, true)
 	flags := []interface{}{imap.SeenFlag}
 
 	err := c.imapClient.Store(seqSet, item, flags, nil)
