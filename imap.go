@@ -117,18 +117,28 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		return
 	}
 
-	if f.Limit > 0 {
-		sub := len(uids) - int(f.Limit)
-		if sub > 0 {
-			if f.SortDesc {
-				uids = uids[sub:]
-				sort.Slice(uids, func(i, j int) bool {
-					return uids[i] > uids[j]
-				})
-			} else {
-				uids = uids[:f.Limit]
-			}
+	if f.Limit > 1 {
+		sub := uidsLen - int(f.Limit)
+		if f.SortDesc {
+			sort.Slice(uids, func(i, j int) bool {
+				return uids[i] > uids[j]
+			})
+		} else {
+			sort.Slice(uids, func(i, j int) bool {
+				return uids[i] < uids[j]
+			})
 		}
+
+		if sub > 0 {
+			uids = uids[sub:]
+		}
+
+	} else {
+		uids = uids[:f.Limit]
+	}
+
+	if len(uids) == 0 {
+		return
 	}
 
 	emails = make([]Email, 0, uidsLen)
