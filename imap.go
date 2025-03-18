@@ -13,6 +13,7 @@ import (
 	"github.com/emersion/go-message/mail"
 	"github.com/sohaha/zlsgo/zarray"
 	"github.com/sohaha/zlsgo/zlog"
+	"github.com/sohaha/zlsgo/zpool"
 )
 
 func (c *Client) imapConnection() error {
@@ -32,12 +33,14 @@ func (c *Client) imapConnection() error {
 }
 
 type Filter struct {
-	Limit    uint     // 限制获取的邮件数量
-	All      bool     // 是否获取所有邮件, 实时获取时无效
-	flags    []string // 邮件标志
-	MarkRead bool     // 是否标记为已读
-	SortDesc bool     // 是否降序
-	Select   string   // 指定 mailbox
+	Limit    uint      // 限制获取的邮件数量
+	All      bool      // 是否获取所有邮件, 实时获取时无效
+	flags    []string  // 邮件标志
+	MarkRead bool      // 是否标记为已读
+	SortDesc bool      // 是否降序
+	Select   string    // 指定 mailbox
+	Since    time.Time // 开始时间
+	Before   time.Time // 结束时间
 }
 
 func (c *Client) hasImapClient() error {
@@ -63,6 +66,7 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
+				time.Sleep(time.Second)
 				err = c.imapConnection()
 				if err == nil {
 					emails, err = c.Get(filter...)
@@ -79,7 +83,7 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 	var mbox *imap.MailboxStatus
 	mbox, err = c.imapClient.Select(f.Select, false)
 	if err != nil {
-		return
+		return nil, errors.New("选择邮箱失败: " + err.Error())
 	}
 
 	if mbox.Messages == 0 {
@@ -93,9 +97,20 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 	}
 
 	criteria := imap.NewSearchCriteria()
-	criteria.WithoutFlags = f.flags
+	if len(f.flags) > 0 {
+		criteria.WithoutFlags = f.flags
+	}
+	if !f.Since.IsZero() {
+		criteria.Since = f.Since
+	}
+	if !f.Before.IsZero() {
+		criteria.Before = f.Before
+	}
 
-	uids, _ := c.imapClient.Search(criteria)
+	uids, err := c.imapClient.Search(criteria)
+	if err != nil {
+		return nil, err
+	}
 
 	uidsLen := len(uids)
 	if uidsLen == 0 {
@@ -116,104 +131,121 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		}
 	}
 
-	readUids := make([]uint32, 0, uidsLen)
-
-	var s imap.BodySectionName
-
 	emails = make([]Email, 0, uidsLen)
-	for {
-		if len(uids) == 0 {
-			break
-		}
 
-		id := zarray.Shift(&uids)
-		seqset := new(imap.SeqSet)
-		seqset.AddNum(id)
-		chanMessage := make(chan *imap.Message, 1)
-		go func() {
-			_ = c.imapClient.Fetch(seqset,
-				[]imap.FetchItem{imap.FetchEnvelope, imap.FetchFlags, imap.FetchRFC822Size},
-				chanMessage)
-		}()
+	results := make(chan Email, uidsLen)
 
-		message := <-chanMessage
-		if message == nil {
+	pool := zpool.New(10)
+	defer pool.Close()
+	for _, id := range uids {
+		pool.Do(func() {
+			email, err := c.fetchEmail(id)
+			if err != nil {
+				email = Email{}
+			}
+			results <- email
+		})
+	}
+
+	for i := 0; i < len(uids); i++ {
+		email := <-results
+		if email.Uid == 0 {
 			continue
 		}
-
-		email := Email{
-			Uid:     id,
-			Flags:   message.Flags,
-			Subject: message.Envelope.Subject,
-		}
-
-		chanMsg := make(chan *imap.Message, 1)
-
-		_ = c.imapClient.Fetch(seqset,
-			[]imap.FetchItem{imap.FetchRFC822},
-			chanMsg)
-
-		msg := <-chanMsg
-		if msg != nil {
-			section := &s
-			r := msg.GetBody(section)
-			if r == nil {
-				continue
-			}
-			email.Date = message.Envelope.Date
-			email.From = zarray.Map(message.Envelope.From, func(_ int, a *imap.Address) string {
-				return a.MailboxName + "@" + a.HostName
-			})
-			var mr *mail.Reader
-			mr, err = mail.CreateReader(r)
-			if err != nil {
-				return nil, err
-			}
-
-			if f.MarkRead {
-				if !zarray.Contains(message.Flags, "\\Seen") {
-					readUids = append(readUids, id)
-				}
-			}
-
-			for {
-				var p *mail.Part
-				p, err = mr.NextPart()
-				if err == io.EOF {
-					break
-				} else if err != nil {
-					return nil, err
-				}
-
-				switch h := p.Header.(type) {
-				case *mail.InlineHeader:
-					if len(email.Content) == 0 {
-						b, _ := ioutil.ReadAll(p.Body)
-						email.Content = b
-					}
-				case *mail.AttachmentHeader:
-					filename, err := h.Filename()
-					if err == nil {
-						if filename != "" {
-							b, _ := ioutil.ReadAll(p.Body)
-							email.Attachment = append(email.Attachment, Attachment{
-								Name: filename,
-								Body: b,
-							})
-						}
-					}
-				}
-			}
-		}
-
 		emails = append(emails, email)
 	}
 
-	if f.MarkRead && len(readUids) > 0 {
-		err = c.MarkRead(readUids...)
+	return emails, nil
+}
+
+func (c *Client) fetchEmail(id uint32) (Email, error) {
+	seqset := new(imap.SeqSet)
+	seqset.AddNum(id)
+
+	chanMessage := make(chan *imap.Message, 1)
+	err := c.imapClient.Fetch(seqset,
+		[]imap.FetchItem{imap.FetchEnvelope, imap.FetchFlags, imap.FetchRFC822Size},
+		chanMessage)
+	if err != nil {
+		return Email{}, err
 	}
 
-	return
+	message := <-chanMessage
+	if message == nil {
+		return Email{}, errors.New("邮件为空")
+	}
+
+	email := Email{
+		Uid:     id,
+		Flags:   message.Flags,
+		Subject: message.Envelope.Subject,
+	}
+
+	chanMsg := make(chan *imap.Message, 1)
+	err = c.imapClient.Fetch(seqset,
+		[]imap.FetchItem{imap.FetchRFC822},
+		chanMsg)
+	if err != nil {
+		return email, err
+	}
+
+	msg := <-chanMsg
+	if msg == nil {
+		return email, errors.New("邮件内容为空")
+	}
+
+	var s imap.BodySectionName
+	section := &s
+	r := msg.GetBody(section)
+	if r == nil {
+		return email, errors.New("邮件体为空")
+	}
+
+	email.Date = message.Envelope.Date
+	email.From = zarray.Map(message.Envelope.From, func(_ int, a *imap.Address) string {
+		return a.MailboxName + "@" + a.HostName
+	})
+
+	mr, err := mail.CreateReader(r)
+	if err != nil {
+		return email, err
+	}
+
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			continue
+		}
+
+		switch h := p.Header.(type) {
+		case *mail.InlineHeader:
+			if len(email.Content) == 0 {
+				b, err := ioutil.ReadAll(p.Body)
+				if err != nil {
+					continue
+				}
+				email.Content = b
+			}
+		case *mail.AttachmentHeader:
+			filename, err := h.Filename()
+			if err != nil || filename == "" {
+				continue
+			}
+			b, err := ioutil.ReadAll(p.Body)
+			if err != nil {
+				continue
+			}
+			email.Attachment = append(email.Attachment, Attachment{
+				Name: filename,
+				Body: b,
+			})
+		}
+	}
+
+	return email, nil
 }
 
 func (c *Client) GetRealTime(interval time.Duration, filter ...func(*Filter)) <-chan Email {
