@@ -155,7 +155,11 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 		emails = append(emails, email)
 	}
 
-	return emails, nil
+	if f.MarkRead {
+		err = c.MarkRead(uids...)
+	}
+
+	return emails, err
 }
 
 func (c *Client) fetchEmail(id uint32) (Email, error) {
