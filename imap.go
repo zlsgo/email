@@ -65,7 +65,7 @@ func (c *Client) Get(filter ...func(*Filter)) (emails []Email, err error) {
 	defer func() {
 		if err != nil {
 			errMsg := err.Error()
-			if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") {
+			if strings.Contains(errMsg, "closed") || strings.Contains(errMsg, "broken pipe") || strings.Contains(errMsg, "abort") {
 				time.Sleep(time.Second)
 				err = c.imapConnection()
 				if err == nil {
